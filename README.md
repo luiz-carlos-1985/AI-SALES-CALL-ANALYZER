@@ -1,4 +1,4 @@
-<img width="1187" height="932" alt="image" src="https://github.com/user-attachments/assets/93b80fae-3dfd-48d4-86c9-63eacc431a4c" /># AI Sales Call Analyzer
+# AI Sales Call Analyzer
 
 ## Overview
 
