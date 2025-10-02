@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Mic, MicOff, Upload, BarChart3, Brain, TrendingUp, Users, Clock, Phone, Play, Pause, Volume2, LogOut, User as UserIcon, Trash2, ChefHat, Download, Target, Award, Zap } from 'lucide-react'
+import { Mic, MicOff, Upload, BarChart3, Brain, TrendingUp, Users, Clock, Phone, Play, Pause, Volume2, LogOut, User as UserIcon, Trash2, ChefHat, Download, Target, Award, Zap, FileText, FileSpreadsheet, FileImage, File } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts'
 import { useRouter } from 'next/router'
 import { useAuth } from '../hooks/useAuth'
@@ -135,14 +135,43 @@ export default function AISalesCallAnalyzer() {
   // Função de gravação com MediaRecorder
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      })
       streamRef.current = stream
       setIsRecording(true)
       setCurrentTime(0)
       setError('')
       
+      // Verificar se o stream está ativo
+      const audioTrack = stream.getAudioTracks()[0]
+      if (!audioTrack || audioTrack.readyState !== 'live') {
+        throw new Error('Microfone não está disponível')
+      }
+      
+      // Monitorar se o track é interrompido
+      audioTrack.onended = () => {
+        setError('⚠️ Microfone foi desconectado')
+        stopRecording()
+      }
+      
       // MediaRecorder para salvar áudio
-      mediaRecorderRef.current = new MediaRecorder(stream)
+      const options = {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 128000
+      }
+      
+      try {
+        mediaRecorderRef.current = new MediaRecorder(stream, options)
+      } catch {
+        // Fallback para formato padrão
+        mediaRecorderRef.current = new MediaRecorder(stream)
+      }
+      
       const chunks: BlobPart[] = []
       
       mediaRecorderRef.current.ondataavailable = (e) => {
@@ -150,58 +179,97 @@ export default function AISalesCallAnalyzer() {
       }
       
       mediaRecorderRef.current.onstop = () => {
-        const blob = new Blob(chunks, { type: 'audio/webm' })
-        saveRecording(blob)
+        if (chunks.length > 0) {
+          const blob = new Blob(chunks, { type: 'audio/webm' })
+          saveRecording(blob)
+        }
       }
       
-      mediaRecorderRef.current.start()
+      mediaRecorderRef.current.onerror = (e) => {
+        console.error('MediaRecorder error:', e)
+        setError('❌ Erro na gravação: ' + (e as any).error?.message || 'Erro desconhecido')
+        stopRecording()
+      }
+      
+      // Iniciar gravação com chunks menores para evitar perda
+      mediaRecorderRef.current.start(1000) // 1 segundo por chunk
       
       // Timer
       timerRef.current = setInterval(() => {
         setCurrentTime(prev => prev + 1)
+        
+        // Verificar se o stream ainda está ativo
+        if (streamRef.current && streamRef.current.getAudioTracks()[0]?.readyState !== 'live') {
+          setError('⚠️ Conexão com microfone perdida')
+          stopRecording()
+        }
       }, 1000)
       
       // Análise de áudio real com Web Audio API
-      audioContextRef.current = new AudioContext()
-      analyserRef.current = audioContextRef.current.createAnalyser()
-      analyserRef.current.fftSize = 2048
-      analyserRef.current.smoothingTimeConstant = 0.8
-      
-      const source = audioContextRef.current.createMediaStreamSource(stream)
-      source.connect(analyserRef.current)
-      
-      // Análise em tempo real
-      const analysisInterval = setInterval(() => {
-        if (!analyserRef.current) return
+      try {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)()
         
-        const bufferLength = analyserRef.current.frequencyBinCount
-        const dataArray = new Uint8Array(bufferLength)
-        analyserRef.current.getByteFrequencyData(dataArray)
-        
-        // Calcular métricas de áudio
-        const average = dataArray.reduce((sum, value) => sum + value, 0) / bufferLength
-        const peak = Math.max(...Array.from(dataArray))
-        const variance = dataArray.reduce((sum, value) => sum + Math.pow(value - average, 2), 0) / bufferLength
-        const dynamicRange = peak - Math.min(...Array.from(dataArray))
-        
-        setAudioLevel(average)
-        
-        // IA avançada baseada em métricas reais
-        if (average > 10) {
-          performAdvancedAIAnalysis({
-            average,
-            peak,
-            variance,
-            dynamicRange,
-            frequency: dataArray
-          })
+        // Verificar se o contexto foi suspenso
+        if (audioContextRef.current.state === 'suspended') {
+          await audioContextRef.current.resume()
         }
-      }, 100)
-      
-      animationRef.current = analysisInterval as any
+        
+        analyserRef.current = audioContextRef.current.createAnalyser()
+        analyserRef.current.fftSize = 2048
+        analyserRef.current.smoothingTimeConstant = 0.8
+        
+        const source = audioContextRef.current.createMediaStreamSource(stream)
+        source.connect(analyserRef.current)
+        
+        // Análise em tempo real com tratamento de erro
+        const analysisInterval = setInterval(() => {
+          try {
+            if (!analyserRef.current || !isRecording) return
+            
+            const bufferLength = analyserRef.current.frequencyBinCount
+            const dataArray = new Uint8Array(bufferLength)
+            analyserRef.current.getByteFrequencyData(dataArray)
+            
+            // Calcular métricas de áudio
+            const average = dataArray.reduce((sum, value) => sum + value, 0) / bufferLength
+            const peak = Math.max(...Array.from(dataArray))
+            const variance = dataArray.reduce((sum, value) => sum + Math.pow(value - average, 2), 0) / bufferLength
+            const dynamicRange = peak - Math.min(...Array.from(dataArray))
+            
+            setAudioLevel(average)
+            
+            // IA avançada baseada em métricas reais
+            if (average > 10) {
+              performAdvancedAIAnalysis({
+                average,
+                peak,
+                variance,
+                dynamicRange,
+                frequency: dataArray
+              })
+            }
+          } catch (analysisError) {
+            console.warn('Erro na análise de áudio:', analysisError)
+          }
+        }, 100)
+        
+        animationRef.current = analysisInterval as any
+        
+      } catch (audioError) {
+        console.warn('Erro no Web Audio API:', audioError)
+        // Continuar gravação mesmo sem análise visual
+      }
       
     } catch (err) {
-      setError('❌ ERRO: ' + (err as Error).message)
+      const errorMessage = (err as Error).message
+      if (errorMessage.includes('Permission denied')) {
+        setError('❌ Permissão negada: Permita acesso ao microfone')
+      } else if (errorMessage.includes('NotFound')) {
+        setError('❌ Microfone não encontrado')
+      } else {
+        setError('❌ ERRO: ' + errorMessage)
+      }
+      setIsRecording(false)
     }
   }
 
@@ -209,69 +277,153 @@ export default function AISalesCallAnalyzer() {
 
   // Parar gravação
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop()
+    try {
+      // Parar MediaRecorder
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+      }
+      
+      // Parar todas as tracks do stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => {
+          track.stop()
+          track.onended = null // Remove event listener
+        })
+        streamRef.current = null
+      }
+      
+      // Limpar timer
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+      
+      // Limpar análise de áudio
+      if (animationRef.current) {
+        clearInterval(animationRef.current as any)
+        animationRef.current = null
+      }
+      
+      // Fechar AudioContext
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close()
+        audioContextRef.current = null
+      }
+      
+      // Limpar analyser
+      analyserRef.current = null
+      mediaRecorderRef.current = null
+      
+      setIsRecording(false)
+      setAudioLevel(0)
+      
+      if (!error.includes('❌') && !error.includes('⚠️')) {
+        setError('✓ Gravação salva com sucesso!')
+      }
+      
+      // Reset session data for next recording
+      setTimeout(() => {
+        if (!isRecording) { // Só limpar se não estiver gravando novamente
+          setError('')
+          setRealTimeData([])
+          setSessionMetrics({
+            avgSentiment: 0.5,
+            avgEngagement: 0.5,
+            peakMoments: 0,
+            totalWords: 0,
+            energyLevel: 0
+          })
+        }
+      }, 2000)
+      
+    } catch (err) {
+      console.error('Erro ao parar gravação:', err)
+      setIsRecording(false)
+      setAudioLevel(0)
     }
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-    }
-    
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-    }
-    
-    if (animationRef.current) {
-      clearInterval(animationRef.current as any)
-    }
-    
-    setIsRecording(false)
-    setAudioLevel(0)
-    setError('✓ Gravação salva com sucesso!')
-    
-    // Reset session data for next recording
-    setTimeout(() => {
-      setError('')
-      setRealTimeData([])
-      setSessionMetrics({
-        avgSentiment: 0.5,
-        avgEngagement: 0.5,
-        peakMoments: 0,
-        totalWords: 0,
-        energyLevel: 0
-      })
-    }, 2000)
   }
 
+  // Verificar espaço disponível no localStorage
+  const getStorageSize = () => {
+    let total = 0
+    for (let key in localStorage) {
+      if (localStorage.hasOwnProperty(key)) {
+        total += localStorage[key].length + key.length
+      }
+    }
+    return total
+  }
+  
+  // Limpar gravações antigas para liberar espaço
+  const cleanOldRecordings = (recordings: any[]) => {
+    // Manter apenas as 10 gravações mais recentes
+    const sortedRecordings = recordings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    return sortedRecordings.slice(0, 10)
+  }
+  
+  // Comprimir dados de IA para economizar espaço
+  const compressAIData = (aiData: any) => {
+    return {
+      sentiment: Math.round(aiData.sentiment * 100) / 100, // 2 casas decimais
+      engagement: Math.round(aiData.engagement * 100) / 100,
+      keywords: aiData.keywords.slice(0, 5), // Máximo 5 keywords
+      realTimeData: aiData.realTimeData.slice(-20) // Últimos 20 pontos
+    }
+  }
+  
   // Salvar gravação no localStorage
   const saveRecording = async (blob: Blob) => {
     try {
       const reader = new FileReader()
       reader.onload = () => {
-        const base64 = reader.result as string
-        const recording = {
-          id: Date.now().toString(),
-          name: `Recording ${new Date().toLocaleString()}`,
-          date: new Date().toISOString(),
-          duration: currentTime,
-          blob: base64,
-          aiData: {
+        try {
+          const base64 = reader.result as string
+          
+          const compressedAIData = compressAIData({
             sentiment: sessionMetrics.avgSentiment,
             engagement: sessionMetrics.avgEngagement,
             keywords: aiAnalysis.keywords,
             realTimeData: [...realTimeData]
+          })
+          
+          const recording = {
+            id: Date.now().toString(),
+            name: `Recording ${new Date().toLocaleString()}`,
+            date: new Date().toISOString(),
+            duration: currentTime,
+            blob: base64,
+            aiData: compressedAIData
           }
+          
+          let updatedRecordings = [...recordings, recording]
+          
+          try {
+            localStorage.setItem('recordings', JSON.stringify(updatedRecordings))
+            setRecordings(updatedRecordings)
+            setNotification({ message: 'Gravação salva com sucesso!', type: 'success' })
+            setTimeout(() => setNotification(null), 3000)
+          } catch (quotaError) {
+            // Limpar gravações antigas automaticamente
+            updatedRecordings = cleanOldRecordings(updatedRecordings)
+            try {
+              localStorage.setItem('recordings', JSON.stringify(updatedRecordings))
+              setRecordings(updatedRecordings)
+              setNotification({ message: 'Gravação salva! Gravações antigas removidas.', type: 'success' })
+              setTimeout(() => setNotification(null), 4000)
+            } catch (finalError) {
+              // Salvar apenas metadados sem áudio
+              const lightRecording = { ...recording, blob: '', aiData: { ...compressedAIData, realTimeData: [] } }
+              const lightRecordings = [...recordings.slice(-3), lightRecording]
+              localStorage.setItem('recordings', JSON.stringify(lightRecordings))
+              setRecordings(lightRecordings)
+              setNotification({ message: 'Gravação salva (sem áudio). Espaço limitado.', type: 'success' })
+              setTimeout(() => setNotification(null), 4000)
+            }
+          }
+        } catch (err) {
+          setNotification({ message: 'Erro ao salvar gravação', type: 'error' })
+          setTimeout(() => setNotification(null), 3000)
         }
-        
-        const updatedRecordings = [...recordings, recording]
-        setRecordings(updatedRecordings)
-        localStorage.setItem('recordings', JSON.stringify(updatedRecordings))
-        
-        setNotification({
-          message: 'Gravação salva com sucesso!',
-          type: 'success'
-        })
-        setTimeout(() => setNotification(null), 3000)
       }
       reader.readAsDataURL(blob)
     } catch (err) {
@@ -334,8 +486,34 @@ export default function AISalesCallAnalyzer() {
   const deleteRecording = (id: string) => {
     const updatedRecordings = recordings.filter(r => r.id !== id)
     setRecordings(updatedRecordings)
-    localStorage.setItem('recordings', JSON.stringify(updatedRecordings))
+    try {
+      localStorage.setItem('recordings', JSON.stringify(updatedRecordings))
+    } catch (err) {
+      console.error('Erro ao atualizar localStorage:', err)
+    }
     setSelectedRecordings(prev => prev.filter(recId => recId !== id))
+  }
+  
+  // Limpar todas as gravações
+  const clearAllRecordings = () => {
+    setRecordings([])
+    setSelectedRecordings([])
+    localStorage.removeItem('recordings')
+    setNotification({
+      message: 'Todas as gravações foram removidas',
+      type: 'success'
+    })
+    setTimeout(() => setNotification(null), 3000)
+  }
+  
+  // Calcular uso do localStorage
+  const getStorageUsage = () => {
+    const used = getStorageSize()
+    const maxSize = 5 * 1024 * 1024 // 5MB aproximado
+    return {
+      used: Math.round(used / 1024), // KB
+      percentage: Math.round((used / maxSize) * 100)
+    }
   }
 
   // Toggle seleção de gravação
@@ -423,6 +601,344 @@ export default function AISalesCallAnalyzer() {
     if (selectedRecordings.length > 0) {
       analyzeSelectedRecordings()
     }
+  }
+  
+  // Gerar relatório em JSON
+  const downloadJSONReport = (type: 'analytics' | 'performance') => {
+    const data = type === 'analytics' ? analyticsData : performanceData
+    const reportData = {
+      reportType: type,
+      generatedAt: new Date().toISOString(),
+      user: user?.name,
+      data
+    }
+    
+    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${type}-report-${new Date().toISOString().split('T')[0]}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    
+    setNotification({
+      message: `Relatório JSON de ${type} baixado com sucesso!`,
+      type: 'success'
+    })
+    setTimeout(() => setNotification(null), 3000)
+  }
+  
+  // Gerar relatório em CSV
+  const downloadCSVReport = (type: 'analytics' | 'performance') => {
+    let csvContent = ''
+    
+    if (type === 'analytics') {
+      csvContent = 'Date,Recordings,Avg Duration (min),Sentiment\n'
+      analyticsData.weeklyStats.forEach(stat => {
+        csvContent += `${stat.date},${stat.recordings},${stat.avgDuration.toFixed(1)},${(stat.sentiment * 100).toFixed(1)}%\n`
+      })
+    } else {
+      csvContent = 'Skill,Current,Target,Improvement\n'
+      performanceData.skillsBreakdown.forEach(skill => {
+        csvContent += `${skill.skill},${skill.current}%,${skill.target}%,${skill.improvement > 0 ? '+' : ''}${skill.improvement}\n`
+      })
+    }
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${type}-report-${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    
+    setNotification({
+      message: `Relatório CSV de ${type} baixado com sucesso!`,
+      type: 'success'
+    })
+    setTimeout(() => setNotification(null), 3000)
+  }
+  
+  // Gerar relatório em TXT
+  const downloadTXTReport = (type: 'analytics' | 'performance') => {
+    const date = new Date().toLocaleDateString()
+    let content = `SalesAI Analyzer - ${type.toUpperCase()} REPORT\n`
+    content += `Generated: ${date}\n`
+    content += `User: ${user?.name}\n`
+    content += '='.repeat(50) + '\n\n'
+    
+    if (type === 'analytics') {
+      content += `ANALYTICS SUMMARY\n`
+      content += `-`.repeat(20) + '\n'
+      content += `Total Recordings: ${analyticsData.totalRecordings}\n`
+      content += `Total Duration: ${Math.round(analyticsData.totalDuration / 60)} minutes\n`
+      content += `Average Sentiment: ${Math.round(analyticsData.avgSentiment * 100)}%\n`
+      content += `Average Engagement: ${Math.round(analyticsData.avgEngagement * 100)}%\n\n`
+      
+      content += `TOP KEYWORDS\n`
+      content += `-`.repeat(15) + '\n'
+      analyticsData.topKeywords.forEach((keyword, i) => {
+        content += `${i + 1}. ${keyword.word} (${keyword.count}x) - ${keyword.sentiment}\n`
+      })
+    } else {
+      content += `PERFORMANCE SUMMARY\n`
+      content += `-`.repeat(20) + '\n'
+      content += `Overall Score: ${performanceData.overallScore}/100\n\n`
+      
+      content += `SKILLS BREAKDOWN\n`
+      content += `-`.repeat(17) + '\n'
+      performanceData.skillsBreakdown.forEach(skill => {
+        content += `${skill.skill}: ${skill.current}% (Target: ${skill.target}%)\n`
+      })
+      
+      content += `\nRECOMMENDATIONS\n`
+      content += `-`.repeat(15) + '\n'
+      performanceData.recommendations.forEach((rec, i) => {
+        content += `${i + 1}. [${rec.priority.toUpperCase()}] ${rec.title}\n   ${rec.description}\n\n`
+      })
+    }
+    
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${type}-report-${new Date().toISOString().split('T')[0]}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+    
+    setNotification({
+      message: `Relatório TXT de ${type} baixado com sucesso!`,
+      type: 'success'
+    })
+    setTimeout(() => setNotification(null), 3000)
+  }
+  
+  // Gerar relatório em HTML
+  const downloadHTMLReport = (type: 'analytics' | 'performance') => {
+    const date = new Date().toLocaleDateString()
+    const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <title>SalesAI Analyzer - ${type.toUpperCase()} Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; color: #333; background: #f5f5f5; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .header { text-align: center; border-bottom: 3px solid #06b6d4; padding-bottom: 20px; margin-bottom: 30px; }
+    .title { color: #06b6d4; font-size: 28px; font-weight: bold; margin-bottom: 10px; }
+    .subtitle { color: #666; font-size: 16px; }
+    .section { margin: 30px 0; }
+    .section-title { color: #06b6d4; font-size: 20px; font-weight: bold; border-bottom: 2px solid #ddd; padding-bottom: 8px; margin-bottom: 15px; }
+    .metric { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #eee; }
+    .metric-label { font-weight: bold; color: #333; }
+    .metric-value { color: #06b6d4; font-weight: bold; font-size: 16px; }
+    .recommendation { background: #f8f9fa; padding: 20px; margin: 15px 0; border-left: 5px solid #06b6d4; border-radius: 5px; }
+    .priority-high { border-left-color: #ef4444; background: #fef2f2; }
+    .priority-medium { border-left-color: #f59e0b; background: #fffbeb; }
+    .priority-low { border-left-color: #10b981; background: #f0fdf4; }
+    .footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title">SalesAI Analyzer</div>
+      <div class="subtitle">${type.toUpperCase()} REPORT</div>
+      <div class="subtitle">Generated: ${date} | User: ${user?.name}</div>
+    </div>
+    
+    ${type === 'analytics' ? `
+      <div class="section">
+        <div class="section-title">Analytics Summary</div>
+        <div class="metric">
+          <span class="metric-label">Total Recordings:</span>
+          <span class="metric-value">${analyticsData.totalRecordings}</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Total Duration:</span>
+          <span class="metric-value">${Math.round(analyticsData.totalDuration / 60)} minutes</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Average Sentiment:</span>
+          <span class="metric-value">${Math.round(analyticsData.avgSentiment * 100)}%</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Average Engagement:</span>
+          <span class="metric-value">${Math.round(analyticsData.avgEngagement * 100)}%</span>
+        </div>
+      </div>
+      
+      <div class="section">
+        <div class="section-title">Top Keywords</div>
+        ${analyticsData.topKeywords.map((keyword, i) => `
+          <div class="metric">
+            <span class="metric-label">${i + 1}. ${keyword.word}</span>
+            <span class="metric-value">${keyword.count}x (${keyword.sentiment})</span>
+          </div>
+        `).join('')}
+      </div>
+    ` : `
+      <div class="section">
+        <div class="section-title">Performance Summary</div>
+        <div class="metric">
+          <span class="metric-label">Overall Score:</span>
+          <span class="metric-value">${performanceData.overallScore}/100</span>
+        </div>
+      </div>
+      
+      <div class="section">
+        <div class="section-title">Skills Breakdown</div>
+        ${performanceData.skillsBreakdown.map(skill => `
+          <div class="metric">
+            <span class="metric-label">${skill.skill}:</span>
+            <span class="metric-value">${skill.current}% (Target: ${skill.target}%)</span>
+          </div>
+        `).join('')}
+      </div>
+      
+      <div class="section">
+        <div class="section-title">AI Recommendations</div>
+        ${performanceData.recommendations.map((rec, i) => `
+          <div class="recommendation priority-${rec.priority}">
+            <strong>[${rec.priority.toUpperCase()}] ${rec.title}</strong><br><br>
+            ${rec.description}<br><br>
+            <small><strong>Category:</strong> ${rec.category}</small>
+          </div>
+        `).join('')}
+      </div>
+    `}
+    
+    <div class="footer">
+      <p>Generated by SalesAI Analyzer | ${new Date().toLocaleString()}</p>
+    </div>
+  </div>
+</body>
+</html>`
+    
+    const blob = new Blob([htmlContent], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${type}-report-${new Date().toISOString().split('T')[0]}.html`
+    a.click()
+    URL.revokeObjectURL(url)
+    
+    setNotification({
+      message: `Relatório HTML de ${type} baixado com sucesso!`,
+      type: 'success'
+    })
+    setTimeout(() => setNotification(null), 3000)
+  }
+
+  // Gerar relatório em PDF
+  const downloadPDFReport = (type: 'analytics' | 'performance') => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+    
+    const date = new Date().toLocaleDateString()
+    const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <title>SalesAI Analyzer - ${type.toUpperCase()} Report</title>
+  <style>
+    @media print { body { margin: 0; } }
+    body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
+    .header { text-align: center; border-bottom: 2px solid #06b6d4; padding-bottom: 15px; margin-bottom: 25px; }
+    .title { color: #06b6d4; font-size: 24px; font-weight: bold; }
+    .subtitle { color: #666; font-size: 14px; margin-top: 5px; }
+    .section { margin: 25px 0; page-break-inside: avoid; }
+    .section-title { color: #06b6d4; font-size: 18px; font-weight: bold; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-bottom: 10px; }
+    .metric { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+    .metric-label { font-weight: bold; }
+    .metric-value { color: #06b6d4; font-weight: bold; }
+    .recommendation { background: #f8f9fa; padding: 15px; margin: 10px 0; border-left: 4px solid #06b6d4; page-break-inside: avoid; }
+    .priority-high { border-left-color: #ef4444; }
+    .priority-medium { border-left-color: #f59e0b; }
+    .priority-low { border-left-color: #10b981; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">SalesAI Analyzer</div>
+    <div class="subtitle">${type.toUpperCase()} REPORT</div>
+    <div class="subtitle">Generated: ${date} | User: ${user?.name}</div>
+  </div>
+  
+  ${type === 'analytics' ? `
+    <div class="section">
+      <div class="section-title">Analytics Summary</div>
+      <div class="metric">
+        <span class="metric-label">Total Recordings:</span>
+        <span class="metric-value">${analyticsData.totalRecordings}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Total Duration:</span>
+        <span class="metric-value">${Math.round(analyticsData.totalDuration / 60)} minutes</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Average Sentiment:</span>
+        <span class="metric-value">${Math.round(analyticsData.avgSentiment * 100)}%</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Average Engagement:</span>
+        <span class="metric-value">${Math.round(analyticsData.avgEngagement * 100)}%</span>
+      </div>
+    </div>
+    
+    <div class="section">
+      <div class="section-title">Top Keywords</div>
+      ${analyticsData.topKeywords.map((keyword, i) => `
+        <div class="metric">
+          <span class="metric-label">${i + 1}. ${keyword.word}</span>
+          <span class="metric-value">${keyword.count}x (${keyword.sentiment})</span>
+        </div>
+      `).join('')}
+    </div>
+  ` : `
+    <div class="section">
+      <div class="section-title">Performance Summary</div>
+      <div class="metric">
+        <span class="metric-label">Overall Score:</span>
+        <span class="metric-value">${performanceData.overallScore}/100</span>
+      </div>
+    </div>
+    
+    <div class="section">
+      <div class="section-title">Skills Breakdown</div>
+      ${performanceData.skillsBreakdown.map(skill => `
+        <div class="metric">
+          <span class="metric-label">${skill.skill}:</span>
+          <span class="metric-value">${skill.current}% (Target: ${skill.target}%)</span>
+        </div>
+      `).join('')}
+    </div>
+    
+    <div class="section">
+      <div class="section-title">AI Recommendations</div>
+      ${performanceData.recommendations.map((rec, i) => `
+        <div class="recommendation priority-${rec.priority}">
+          <strong>[${rec.priority.toUpperCase()}] ${rec.title}</strong><br><br>
+          ${rec.description}<br><br>
+          <small><strong>Category:</strong> ${rec.category}</small>
+        </div>
+      `).join('')}
+    </div>
+  `}
+</body>
+</html>`
+    
+    printWindow.document.write(htmlContent)
+    printWindow.document.close()
+    
+    setTimeout(() => {
+      printWindow.print()
+      printWindow.close()
+    }, 500)
+    
+    setNotification({
+      message: `Relatório PDF de ${type} aberto para impressão!`,
+      type: 'success'
+    })
+    setTimeout(() => setNotification(null), 3000)
   }
 
   // IA Avançada para análise de áudio
@@ -539,6 +1055,66 @@ export default function AISalesCallAnalyzer() {
     return keywords.length > 0 ? keywords : ['análise', 'voz']
   }
 
+  // Componente de botões de download
+  const ReportDownloadButtons = ({ type }: { type: 'analytics' | 'performance' }) => (
+    <div className="flex items-center space-x-2">
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => downloadPDFReport(type)}
+        className="flex items-center space-x-1 px-3 py-2 bg-red-600/20 text-red-300 rounded-lg text-sm hover:bg-red-600/30"
+        title="Download PDF Report"
+      >
+        <File className="w-4 h-4" />
+        <span>PDF</span>
+      </motion.button>
+      
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => downloadHTMLReport(type)}
+        className="flex items-center space-x-1 px-3 py-2 bg-orange-600/20 text-orange-300 rounded-lg text-sm hover:bg-orange-600/30"
+        title="Download HTML Report"
+      >
+        <File className="w-4 h-4" />
+        <span>HTML</span>
+      </motion.button>
+      
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => downloadJSONReport(type)}
+        className="flex items-center space-x-1 px-3 py-2 bg-blue-600/20 text-blue-300 rounded-lg text-sm hover:bg-blue-600/30"
+        title="Download JSON Report"
+      >
+        <FileText className="w-4 h-4" />
+        <span>JSON</span>
+      </motion.button>
+      
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => downloadCSVReport(type)}
+        className="flex items-center space-x-1 px-3 py-2 bg-green-600/20 text-green-300 rounded-lg text-sm hover:bg-green-600/30"
+        title="Download CSV Report"
+      >
+        <FileSpreadsheet className="w-4 h-4" />
+        <span>CSV</span>
+      </motion.button>
+      
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => downloadTXTReport(type)}
+        className="flex items-center space-x-1 px-3 py-2 bg-purple-600/20 text-purple-300 rounded-lg text-sm hover:bg-purple-600/30"
+        title="Download TXT Report"
+      >
+        <FileImage className="w-4 h-4" />
+        <span>TXT</span>
+      </motion.button>
+    </div>
+  )
+  
   // Alternar ingrediente
   const toggleIngredient = (ingredient: string) => {
     setSelectedIngredients(prev =>
@@ -995,6 +1571,18 @@ export default function AISalesCallAnalyzer() {
                         )}
                       </div>
                     </motion.button>
+                    
+                    {/* Botão de Teste de Microfone */}
+                    {!isRecording && (
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={testMicrophone}
+                        className="w-full px-6 py-2 border border-cyan-500/50 text-cyan-300 rounded-lg font-medium hover:bg-cyan-500/10 transition-all"
+                      >
+                        Test Microphone
+                      </motion.button>
+                    )}
                   </div>
                 </motion.div>
 
@@ -1210,8 +1798,21 @@ export default function AISalesCallAnalyzer() {
                       Ver Analytics ({selectedRecordings.length})
                     </motion.button>
                   )}
+                  {recordings.length > 0 && (
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={clearAllRecordings}
+                      className="px-3 py-2 bg-red-600/20 text-red-300 rounded-lg text-sm hover:bg-red-600/30"
+                    >
+                      Limpar Tudo
+                    </motion.button>
+                  )}
                   <div className="text-sm text-gray-400">
                     {recordings.length} recording{recordings.length !== 1 ? 's' : ''}
+                    <div className="text-xs text-cyan-400">
+                      Storage: {getStorageUsage().used}KB ({getStorageUsage().percentage}%)
+                    </div>
                     {isAnalyzing && (
                       <div className="mt-1 text-xs text-cyan-400">
                         Analisando áudios com IA...
@@ -1366,12 +1967,18 @@ export default function AISalesCallAnalyzer() {
                   className="lg:col-span-2 glass rounded-xl p-6 mb-6"
                 >
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold">Analytics Overview</h2>
-                    {selectedRecordings.length > 0 && (
-                      <div className="px-3 py-1 bg-cyan-500/20 text-cyan-300 rounded-full text-sm">
-                        {selectedRecordings.length} gravações selecionadas
-                      </div>
-                    )}
+                    <div className="flex items-center space-x-4">
+                      <h2 className="text-xl font-bold">Analytics Overview</h2>
+                      {selectedRecordings.length > 0 && (
+                        <div className="px-3 py-1 bg-cyan-500/20 text-cyan-300 rounded-full text-sm">
+                          {selectedRecordings.length} gravações selecionadas
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <span className="text-sm text-cyan-300">Download Report:</span>
+                      <ReportDownloadButtons type="analytics" />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="text-center">
@@ -1615,10 +2222,14 @@ export default function AISalesCallAnalyzer() {
               >
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-2xl font-bold">Performance Dashboard</h2>
-                  <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-6">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-sm text-cyan-300">Download Report:</span>
+                      <ReportDownloadButtons type="performance" />
+                    </div>
                     <div className="text-center">
                       <div className="text-3xl font-bold gradient-text">{performanceData.overallScore}</div>
-                      <div className="text-sm text-gray-400">Overall Score</div>
+                      <div className="text-sm text-cyan-300">Overall Score</div>
                     </div>
                   </div>
                 </div>
