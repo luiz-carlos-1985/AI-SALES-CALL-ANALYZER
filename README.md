@@ -1,4 +1,4 @@
-# AI Sales Call Analyzer
+<img width="1187" height="932" alt="image" src="https://github.com/user-attachments/assets/93b80fae-3dfd-48d4-86c9-63eacc431a4c" /># AI Sales Call Analyzer
 
 ## Overview
 
@@ -340,6 +340,22 @@ The main component includes four comprehensive tabs:
 - WebRTC (for audio recording)
 - Canvas API (for visualizations)
 - Microphone access permission
+
+## Screenshots:
+
+<img width="1100" height="947" alt="image" src="https://github.com/user-attachments/assets/087c48ae-b75c-4441-b039-950e5264d2a3" />
+
+<img width="1077" height="1041" alt="image" src="https://github.com/user-attachments/assets/ce36ed77-0a26-4ffe-b2b1-5ca0917b223e" />
+
+<img width="1187" height="932" alt="image" src="https://github.com/user-attachments/assets/7cba3811-52ab-4c9e-b390-95de0ae57bed" />
+
+<img width="1079" height="1011" alt="image" src="https://github.com/user-attachments/assets/b9144f8d-9585-4007-81ee-d064e45516ad" />
+
+<img width="1108" height="647" alt="image" src="https://github.com/user-attachments/assets/f74a18a2-9491-4c1c-962f-0ae8efd77e4a" />
+
+<img width="1067" height="1044" alt="image" src="https://github.com/user-attachments/assets/df126e8d-77a2-4a1c-8171-a5c475d6ad01" />
+
+<img width="1068" height="1044" alt="image" src="https://github.com/user-attachments/assets/bd19f6a1-b024-40b0-8638-a3a28315413f" />
 
 ## License
 
